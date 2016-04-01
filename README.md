@@ -8,8 +8,9 @@ Speed benchmark of java and c for multithread application
 
 ###usage
 
-* java -jar benchmarkJava.jar
-* java -jar benchmarkJava.jar   [threads=32] 
+* java -jar benchmarkJava.jar   [tree|alloc|queue|hash|prime|copy]
+* java -jar benchmarkJava.jar   [tree|alloc|queue|hash|prime|copy] [threads=8] [arrays=8] [size=100000] [printFilter=5000000]
+
 
 c:
 
@@ -24,21 +25,16 @@ When running with no parameters: uses default parameters.
 
 Unique prefix of argument name is enough (No need to type full name).
 
-* threads     - number of concurrent threads</li>
-* iterations - loops</li>
-
 ###help
 
 * When running with no parameters (Or with) help is printed.
 * The help is created automatically.
 * See Args.java args.c
 
-
 ### files
 
-
-* Makefile -  compiles c program</li>
-* benchmarkJava.java</li>
+* Makefile -  compiles c program
+* benchmarkJava.java
 * Args.java             Argumet parser for Java (MIT license)</li>
 * benchmarkJava.jar
 * benchmark.c
