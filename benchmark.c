@@ -249,7 +249,7 @@ SafeArray *s_arr [ARRAY_MAX];
 SafeQueue *s_queue = new SafeQueue(); 
 
 int show (void) {
-     int siz = fprintf (stderr, "\noverhead loop start test=%s threads=%d arrays=%d size=%d printFilter=%ld \n",
+     int siz = fprintf (stderr, "\nbenchmark loop start test=%s threads=%d arrays=%d size=%d printFilter=%ld \n",
             s_testName, s_threadCnt, s_arrayNum, s_arraySize, s_printFilter);
      return siz;
 }
