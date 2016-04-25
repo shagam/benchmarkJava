@@ -14,11 +14,9 @@ import java.util.concurrent.BlockingQueue;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
-import share.Randomizer;
-import share.UtilsNumbers;
 
-import share.cli.Args;
 
 
 
@@ -43,8 +41,7 @@ public class BenchmarkJava implements Runnable {
     static final boolean THREAD_POOL = true;
     //static final boolean WITH_LOCK = true;
     static final int TREE_KEY_MAX = 100 * 1000;
-    static AtomicLong  s_loops = new AtomicLong();
-    static long s_printFilter;
+    static AtomicLong  s_grossLoops = new AtomicLong();
     static final int PRINT_FILTER = 5000000;
         
     //static AtomicInteger s_count = new AtomicInteger(); 
@@ -57,7 +54,7 @@ public class BenchmarkJava implements Runnable {
         treeNoLock,
         copy,
         prime,
-        loops,
+        count,
     }
     
     static Test s_test;
@@ -66,18 +63,19 @@ public class BenchmarkJava implements Runnable {
     static SafeHash [] s_hasharray;
     static long s_copyArea [][];
     static final int QUEUE_SIZE = 10000;
-    static BlockingQueue <Struc>  s_strucQ = new ArrayBlockingQueue <>(QUEUE_SIZE);
-
-    static BlockingQueue <Struc>  s_strucQ_final = new ArrayBlockingQueue <>(QUEUE_SIZE);    
-//static ReadWriteLock [] lock = new ReadWriteLock [ARRAY_NUM];
+    static BlockingQueue <Struc>  s_strucQ; // = new ArrayBlockingQueue <>(QUEUE_SIZE);
+  
     static Random s_random = new Random();
     static int s_threadCnt = THREAD_MAX;
     static long s_startTimeMili;
     static int s_arraySize;
-    static long s_primeDelay;
+    static int s_delay;
     static boolean s_verbose;
+    static long s_printInterval;
+    static boolean s_help;
+    static Thread [] s_thread;
     
-    long m_timeOfPrint;
+    long m_timeOfPrint = System.currentTimeMillis();
     long m_loopsOfPrint;
 
     Randomizer m_randomizer = new Randomizer(); // faster randomizer 232000
@@ -90,6 +88,8 @@ public class BenchmarkJava implements Runnable {
     static boolean s_noLock;
     
     int m_id;
+    int m_found = 0;
+    int m_notFound = 0;
     
     
     public BenchmarkJava(int id) {
@@ -114,30 +114,25 @@ public class BenchmarkJava implements Runnable {
     public static void main (String[] args) {
         //UtilsNumbers.formatIntUtest();
         //Args.utest();        
-        int threads = Args.getInteger("threads", args, "number of concurrent threads");
-        if (threads != Integer.MAX_VALUE)
-            s_threadCnt = threads;
-        else
+        s_threadCnt = Args.getInteger("threads", args, "number of concurrent threads");
+        if (s_threadCnt == Integer.MAX_VALUE)
             s_threadCnt = Runtime.getRuntime().availableProcessors();
+        s_thread = new Thread [s_threadCnt];
 
-        int arrays = Args.getInteger("arrays", args, "number of arrays, accessed by threads");
-        if (arrays != Integer.MAX_VALUE)
-            s_arrayNum = arrays;
-        else       
+        s_arrayNum = Args.getInteger("arrays", args, "number of arrays, accessed by threads");
+        if (s_arrayNum == Integer.MAX_VALUE)     
             s_arrayNum = s_threadCnt;
         
-        int size = Args.getInteger("size", args, "size of each array/tree");
-        if (size != Integer.MAX_VALUE)
-            s_arraySize = size;
-        else       
+        s_arraySize = Args.getInteger("size", args, "size of each array/tree");
+        if (s_arraySize == Integer.MAX_VALUE)    
             s_arraySize = TREE_KEY_MAX;        
-
-        int print_filter = Args.getInteger("printFilter", args, "print filter (fraction of loops that print)");
-        if (print_filter != Integer.MAX_VALUE)
-            s_printFilter = print_filter;
-        else       
-            s_printFilter = PRINT_FILTER;
-
+        
+        s_delay = Args.getInteger("delay", args, "duration of test");
+        if (s_delay == Integer.MAX_VALUE)
+            s_delay = 5000;
+        
+        s_help = Args.getBool("help", args, "help text");        
+        
         boolean tree = Args.getBool ("tree", args, "test==tree");
         if (tree) {
             assert s_test == null : s_test;            
@@ -156,14 +151,14 @@ public class BenchmarkJava implements Runnable {
                 String str ="\n######  noLock requires #array==#threads\n " + help();
                 Args.exit (str, 1);                
             }
-            if (s_test == Test.tree)
-                s_test = Test.treeNoLock;
+            s_test = Test.treeNoLock;
         }
         
         boolean queue =   Args.getBool ("queue", args, "test==queue");
         if (queue) {
             assert s_test == null : s_test;            
             s_test = Test.queue;
+            s_strucQ = new ArrayBlockingQueue <>(s_arraySize);
         }
         boolean hash = Args.getBool ("hash", args, "test==hash");
         if (hash) {
@@ -175,30 +170,30 @@ public class BenchmarkJava implements Runnable {
             assert s_test == null : s_test;
             s_test = Test.copy;
         }
-        boolean prime = Args.getBool ("prime", args, "test==prime");
+        boolean prime = Args.getBool ("prime", args, "test==prime compute intensive");
         if (prime) {
             assert s_test == null : s_test;
             s_test = Test.prime;
             if (s_arraySize == TREE_KEY_MAX)
-                s_arraySize = 5000;
+                s_arraySize = 500;           
         }
-        
-        boolean loop = Args.getBool ("loops", args, "test==loops");
-        if (loop) {
+        boolean count = Args.getBool ("count", args, "test==count");
+        if (prime) {
             assert s_test == null : s_test;
-            s_test = Test.loops;
-        }
+            s_test = Test.count;
+        }        
         boolean verbose = Args.getBool ("verbose", args, "print test param during run");
         if (verbose)
             s_verbose = true;
         
-        Args.showAndVerify (true);
+        Args.showAndVerify (s_help);
         
         s_arr = new SafeArray [s_arrayNum];
         s_treeArray = new SafeTree [s_arrayNum];
         s_hasharray = new SafeHash [s_arrayNum];
         if (s_test == null) {
             String str ="missing testName, see examples: " + help();
+            Args.showAndVerify (true);
             Args.exit (str, 1);
         }
         switch (s_test) {
@@ -212,7 +207,7 @@ public class BenchmarkJava implements Runnable {
             case treeNoLock:
                 for (int i = 0; i < s_arrayNum; i++) {
                     s_treeArray[i] = new SafeTree();            
-                    for (int n = 0; n < s_arraySize/8; n++) {
+                    for (int n = 0; n < s_arraySize; n++) {
                         int in = s_random.nextInt(s_arraySize);
                         s_treeArray[i].put(in, in);
                     }
@@ -231,37 +226,35 @@ public class BenchmarkJava implements Runnable {
        
             case copy:
                 s_copyArea = new long [s_arrayNum * 2][s_arraySize];
-                s_printFilter = 10000;
                 break;
                 
-            case queue:
-                s_printFilter = 10000;                
-                for (int n = 0; n < 1000000; n++) {
-                    if (n % 1000 == 0) {
-                        if (s_strucQ_final.size() > 0)
-                            break;
-                    }
-                    Struc struc = new Struc(); // create and discard
-                }
-                for (int n = 0; n < QUEUE_SIZE; n++) {
+            case queue:               
+//                for (int n = 0; n < 1000000; n++) {
+//                    if (n % 1000 == 0) {
+//                        if (s_strucQ_final.size() > 0)
+//                            break;
+//                    }
+//                    Struc struc = new Struc(); // create and discard
+//                }
+                for (int n = 0; n < s_arraySize; n++) {
                     Struc struc = new Struc();
                     s_strucQ.add(struc);
                 }
                 break;
                 
             case prime:
-                s_printFilter = 50;
-                break;
-                
-            case loops:
                 break;
 
             default:
+                Args.showAndVerify (true);
                 Args.exit ("invalid arg: " + help(), 2);
-        }       
+        }
+        
+        if (s_arraySize == Integer.MAX_VALUE)    
+            s_arraySize = TREE_KEY_MAX; 
         
         s_startTimeMili = System.currentTimeMillis();
-        System.err.print("\n" + show());
+        System.err.print(show());
 
         if (THREAD_POOL) {
             ExecutorService executor = Executors.newFixedThreadPool(s_threadCnt);
@@ -269,37 +262,67 @@ public class BenchmarkJava implements Runnable {
             for (int n = 0; n < s_threadCnt; n++) {
                 Runnable worker = new BenchmarkJava (n);
                 executor.execute(worker);
-            }                
-        }
-        else {
-            for (int n = 0; n < s_threadCnt; n++) { 
-                Runnable runable = new BenchmarkJava (n);
-                Thread thread = new Thread (runable);
-                thread.start();
+            }
+
+            executor.shutdown();
+            try {
+                while (!executor.awaitTermination(24L, TimeUnit.HOURS)) {
+                    System.out.println("Not yet. Still waiting for termination");
+                }
+            } catch (InterruptedException e) {
+                e.printStackTrace();
             }
         }
+        else {
+            for (int n = 0; n < s_threadCnt; n++) {
+                Runnable runable = new BenchmarkJava (n);
+                s_thread[n] = new Thread (runable);
+                s_thread[n].start();
+            }
+            for (int i = 0; i < s_threadCnt; i++){
+                try {
+                    s_thread[i].join();
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+
+        long delayMili = System.currentTimeMillis() - s_startTimeMili;  
+        System.err.print("\n\napplication exit; grossLoops=" + formatInt(s_grossLoops.get()) );
+        long mbperSec = s_grossLoops.get() * s_arraySize * 8 * 2 / 1000000 / (delayMili / 1000);
+        if (s_test == Test.copy)
+            System.err.print("      grossMBperSec=" + formatInt(mbperSec) + "\n\n");
+        show();
     }
     
 
     
     public void run () {
         //Random m_generator = new Random();
-        for (long loops = 1; ; loops++) {
-            if ((loops & 0xf) == 0)
-                s_loops.addAndGet(0x10);
+        for (long loops = 1;  ; loops++) {
+            if ((loops & 0xf) == 0) {
+                s_grossLoops.addAndGet(0x10);
+                if (System.currentTimeMillis() - s_startTimeMili > s_delay)
+                    break;
+            }
             int key = -1;
             int arr_num = -1;
-            if (s_test != Test.loops) {
-                key = m_randomizer.nextInt(s_arraySize);
-                if (s_test == Test.copy && s_threadCnt == s_arrayNum) 
-                    arr_num = m_id; // each thread uses its own buffers
-                else
-                    arr_num = m_randomizer.nextInt(s_arrayNum);
-            }
+
+            key = m_randomizer.nextInt(s_arraySize);
+            if (s_test == Test.copy && s_threadCnt == s_arrayNum) 
+                arr_num = m_id; // each thread uses its own buffers
+            else
+                arr_num = m_randomizer.nextInt(s_arrayNum);
+
             Integer val;
             switch (s_test) {
                 case tree:
                     val = s_treeArray[arr_num].get(key);
+                    if (val == null)
+                        m_notFound ++;
+                    else
+                        m_found ++;
                     break;
                     
                 case treeNoLock:
@@ -318,83 +341,81 @@ public class BenchmarkJava implements Runnable {
                     break;
                     
                 case copy:
-                    System.arraycopy(s_copyArea[arr_num], 0, s_copyArea[arr_num + s_arrayNum], 0, s_arraySize);
-//                    for (int i = 0; i < s_arraySize; i++)
-//                        s_copyArea[arr_num][i] = s_copyArea[arr_num + s_arrayNum][i]; 
+                    //System.arraycopy(s_copyArea[arr_num], 0, s_copyArea[arr_num + s_arrayNum], 0, s_arraySize);
+                    for (int i = 0; i < s_arraySize; i++)
+                        s_copyArea[arr_num][i] = s_copyArea[arr_num + s_arrayNum][i]; 
                     break;
                     
                 case queue:
-                    Struc struc = s_strucQ_final.poll();
-                    if (struc == null)
-                        struc = s_strucQ.poll();
+                    Struc struc = s_strucQ.poll();
                     if (struc != null)
                         s_strucQ.add (struc);
-
-                    for (int j = 0; j < 100; j++) {
-                        struc = new Struc();
-                    }                    
+                   
                     break;
                     
                 case prime:
-                    long startMili = System.currentTimeMillis();
-                    int count = PrimeNumbers.countPrimes(s_arraySize);
-                    s_primeDelay = System.currentTimeMillis() - startMili;
-                    count += 1;                
+                    int count = PrimeNumbers.countPrimes(s_arraySize);               
                     break;
                     
-                case loops:
-                    int rand = m_randomizer.nextInt();
-                    int rand1 = m_randomizer.nextInt();
-                    int rand2 = m_randomizer.nextInt();
-                    int rand3 = m_randomizer.nextInt();
+                case count: //s_grossLoops is incremented
                     break;
-                    
-                    
+                                       
                 default:
                     assert false: "invalid test";
-            }
-            
-            if ((loops % s_printFilter) == 0) {            
-                long delay = System.currentTimeMillis() - s_startTimeMili;
-                long delayPrint = System.currentTimeMillis() - m_timeOfPrint;
-                String txt = "\n";
-                if (s_verbose)
-                    txt += show();
-
-                txt += " loops=" + UtilsNumbers.formatInt(loops);
-                txt += " miliSec=" + UtilsNumbers.formatInt(delay);
-                txt += " thread=" + m_id;
-                if (delayPrint> 0)
-                txt += " loopsPerMiliPerThread=" + (loops - m_loopsOfPrint) / delayPrint;
-                //txt += " s_strucQ_final=%d" + overhead.s_strucQ_final.size();
-                txt += " grossLoops=" + UtilsNumbers.formatInt(s_loops.get());
-                if (delay / 1000 > 0) {
-//                    if (s_test == Test.copy || s_test == Test.prime)
-//                        txt += " grossLoopsPerSec=" + (s_loops.get() / (delay / 1000));
-//                    else
-                        txt += " grossLoopsPerMiliSec=" + UtilsNumbers.formatInt (s_loops.get() / delay);
-                }
-                if (s_test == Test.prime)
-                    txt += " delay=" + s_primeDelay;    
-                System.err.print(txt);
-                
-                m_timeOfPrint = System.currentTimeMillis();
-                m_loopsOfPrint = loops;
-            }
+            }           
         }
-      
     }   
     
     static String show () {
-        String txt = "java test=" + s_test.toString();
+        String txt = "benchmark java: test=" + s_test.toString();
+        txt += " delay=" + s_delay;
         txt += " threads=" + s_threadCnt;
         txt += " arrayNum=" + s_arrayNum;
         txt += " size=" + s_arraySize;
-        txt += " filter=" + s_printFilter;
-        txt += " noLock=" + s_noLock;
+        if (s_noLock)
+            txt += " noLock=" + s_noLock;
         
         return txt;
     }
+    
+   public static String formatInt (long n) {
+        final int BILION = 1000000000; 
+        final int MILION = 1000000; 
+        final int KILO = 1000; 
+        boolean fill = false;
+        String str = "";
+        if (n > BILION) {
+            //str += n / BILION + ",";
+            str += String.format("%d,", n / BILION);
+            n -= n / BILION * BILION;
+            fill = true;
+        }
+        if (n > MILION) {
+            //str += n / MILION + ",";
+            if (fill)
+                str += String.format("%03d,", n / MILION);
+            else
+                str += String.format("%d,", n / MILION);
+            n -= n / MILION * MILION;
+            fill = true;
+        }        
+        if (n > KILO) {
+            //str += n / KILO + ",";
+            if (fill)
+                str += String.format("%03d,", n / KILO);
+            else
+                str += String.format("%d,", n / KILO);
+            n -= n / KILO * KILO;
+            fill = true;            
+        }
+        if (fill)
+            str += String.format("%03d", n);
+        else
+            str += n;
+        
+        return str;
+    }
+
         
 }
 
@@ -403,11 +424,11 @@ class Struc {
     long m_l [] = new long[siz];
     byte m_b;
     String m_str;
-    protected void finelize () {
-        if (BenchmarkJava.s_test == BenchmarkJava.Test.loops)
-            BenchmarkJava.s_strucQ_final.add (this);
-        
-    }
+//    protected void finelize () {
+//        if (BenchmarkJava.s_test == BenchmarkJava.Test.queue)
+//            BenchmarkJava.s_strucQ_final.add (this);
+//        
+//    }
 }
 
 class SafeTree {

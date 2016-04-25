@@ -10,6 +10,8 @@
 #include <map>
 #include "args.h"
 #include <unordered_map>
+#include <limits.h>
+
 //#include <hash_map>
 
 //* Jewel Store Copyright (C) 2011-2014  TechoPhil Ltd
@@ -44,24 +46,24 @@ public:
 
 
 const int ARRAY_SIZE = 100000;
-const int THREAD_NUM = 8;
 const int THREAD_MAX = 100;
 const int ARRAY_MAX = 100;
 
-const int TREE_KEY_MAX = 100 * 1000;
 const int QUEUE_MAX = 1000;
     
 
-static long  s_start;
+static long  s_startMili = getTimeMili(); ;
 static const char* s_testName = NULL;
 static int s_threadCnt = 0;
 static int s_arrayNum = s_threadCnt;
 static int s_arraySize;
-static long s_printFilter;
 static int s_verbose = 0;
+static int s_help = 0;
+static int s_delay;
+
 static long ** s_copyArrays;
 
-pthread_t               thread_id[THREAD_MAX];
+static pthread_t               s_thread_id[THREAD_MAX];
 
 const char * help ();
 int getInt (char* th);
@@ -73,6 +75,8 @@ enum Test {
     t_treeNoLock,
     t_queue,
     t_copy,
+    t_prime,
+    t_count,
 };
 
 int s_test;
@@ -83,6 +87,58 @@ inline long InterlockedIncrement(long* p, int delta)
 }
 
 static long s_grossLoops;
+
+long seed = getTimeMili ();    
+    
+long random () {
+      long x = seed;
+      x ^= (x << 21);
+      x ^= (x >> 35);
+      x ^= (x << 4);
+      seed = x;
+      if (x < 0)
+          x = 0 - x;
+      return x;
+} 
+
+int formatLong (char * str, long n) {
+    char * str_save = str;
+    const int BILION = 1000000000; 
+    const int MILION = 1000000; 
+    const int KILO = 1000; 
+    int fill = 0;
+
+    if (n > BILION) {
+        //str += n / BILION + ",";
+        str += sprintf (str, "%ld,", n / BILION);
+        n -= n / BILION * BILION;
+        fill = 1;
+    }
+    if (n > MILION) {
+        //str += n / MILION + ",";
+        if (fill)
+            str += sprintf (str, "%03ld,", n / MILION);
+        else
+            str += sprintf (str, "%ld,", n / MILION);
+        n -= n / MILION * MILION;
+        fill = 1;
+    }        
+    if (n > KILO) {
+        //str += n / KILO + ",";
+        if (fill)
+            str += sprintf (str, "%03ld,", n / KILO);
+        else
+            str += sprintf (str, "%ld,", n / KILO);
+        n -= n / KILO * KILO;
+        fill = 1;            
+    }
+    if (fill)
+        str += sprintf(str, "%03ld", n);
+    else
+        str += sprintf(str, "%3ld", n);
+
+    return str - str_save;
+}
 
 class SafeTree {
     
@@ -95,38 +151,52 @@ public:
         int stat = pthread_mutex_init (& m_mutex, NULL);        
     }
     void put (int key, int val) {
-        map<int,int>::iterator it;
-        int stat = pthread_mutex_lock (&m_mutex);
-        if (stat)
-            exit(-3);
+
+        if (s_threadCnt > 1) {
+            int stat = pthread_mutex_lock (&m_mutex);
+            if (stat)
+                exit(-3);
+        }
         
         m_tree.insert (make_pair(key, val));        
-        int stat1 = pthread_mutex_unlock (&m_mutex);         
-        if (stat1)
-            exit(-4);
+        if (s_threadCnt > 1) {
+            int stat1 = pthread_mutex_unlock (&m_mutex);         
+            if (stat1)
+                exit(-4);
+        }
     }
     
     int get (int key) {
         int val = -1;
         map<int,int>::iterator it;        
-        int stat = pthread_mutex_lock (&m_mutex);
-        if (stat)
-            exit(-3);
+        if (s_threadCnt > 1) {
+            int stat = pthread_mutex_lock (&m_mutex);
+            if (stat)
+                exit(-3);
+        }
         it = m_tree.find(key);
-        int stat1 = pthread_mutex_unlock (&m_mutex);         
-        if (stat1)
-            exit(-4);
+        if (s_threadCnt > 1) {
+            int stat1 = pthread_mutex_unlock (&m_mutex);         
+            if (stat1)
+                exit(-4);
+        }
         if( it != m_tree.end())
-            val = it->second;        
+            val = it->second;
+        else
+            val = INT_MAX;
         return val;
-    }   
+    }
+    
+    
 
     int getNoLock (int key) {
         int val = -1;
         map<int,int>::iterator it;        
         it = m_tree.find(key);
         if( it != m_tree.end())
-            val = it->second;        
+            val = it->second;
+        else
+            val = INT_MAX;
         return val;
     }
 };
@@ -167,7 +237,9 @@ public:
         if (stat1)
             exit(-4);
         if( it != m_hash.end())
-            val = it->second;        
+            val = it->second;
+        else
+            val = INT_MAX;
         return val;
     }   
 };
@@ -249,84 +321,123 @@ SafeArray *s_arr [ARRAY_MAX];
 SafeQueue *s_queue = new SafeQueue(); 
 
 int show (void) {
-     int siz = fprintf (stderr, "\nbenchmark loop start test=%s threads=%d arrays=%d size=%d printFilter=%ld \n",
-            s_testName, s_threadCnt, s_arrayNum, s_arraySize, s_printFilter);
+     int siz = fprintf (stderr, "\nbenchmark c: test=%s delay=%d threads=%d arrayNum=%d size=%d \n",
+            s_testName, s_delay, s_threadCnt, s_arrayNum, s_arraySize);
      return siz;
 }
 
-void print_stat (int threadId, long delay, long loops) {
-    int ptr = 0;
-    char str[500];
-    ptr += sprintf (str, "\ncc test=%s ", s_testName);
-    if (s_verbose)
-    ptr += sprintf (str + ptr, "treads=%d arrayNum=%d size=%d printFilter=%ld verbose=%d",
-        s_threadCnt, s_arrayNum, s_arraySize, s_printFilter, s_verbose);
-    ptr += sprintf (str + ptr, "loops=%ld miliSec=%ld thread=%d loopsPerMiliPerThread=%ld grossLoops=%ld grossLoopsPermili=%ld ",
-            loops, delay, threadId, loops/delay, s_grossLoops, s_grossLoops/delay);
+ int countPrimes (int range) {		
+       int i =0;
+       int primeCount = 0;
+       int num =0;
 
-    printf ("%s", str); 
-}
+       for (i = 1; i <= range; i++) { 		  	  
+          int counter=0; 	  
+          for(num =i; num>=1; num--)  {
+             if(i%num==0){
+ 		counter = counter + 1;
+	     }
+	  }
+	  if (counter ==2)
+	  {
+	     //Appended the Prime number to the String
+	     //primeNumbers = primeNumbers + i + " ";
+             primeCount ++;
+	  }	
+       }
+       return primeCount;
+   }
 
+ int randPositive () {
+     int rnd = random();
+     if (rnd < 0)
+         rnd = 0 - rnd;
+     return rnd;
+ }
+ 
 void *thread ( void *ptr ) {
+  long m_printTime = getTimeMili ();
   size_t tmp = (size_t) ptr;
   int id = (int) tmp;
+  int m_found = 0;
+  int m_notFound = 0;
+  
   for (long n = 1;  ; n++) {
-      if ((n & 0xf) == 0)
-      InterlockedIncrement(& s_grossLoops, 0x10);
       
-     if (s_test == t_tree) {
-        int arr_num = rand() % s_arrayNum;
-        int key = rand() % TREE_KEY_MAX;
+    if ((n & 0xf) == 0) {
+      InterlockedIncrement(& s_grossLoops, 0x10);
+      if (getTimeMili () - s_startMili > s_delay)
+          break;
+    }
+    if (s_test == t_tree) {
+        int rand = randPositive ();
+        int arr_num = rand % s_arrayNum;
+        int key = rand % s_arraySize;
         
-        int val = s_treeArray[arr_num]->get (key);         
+        int val = s_treeArray[arr_num]->get (key);
+        if (val == INT_MAX)
+            m_notFound ++;
+        else
+            m_found ++;
      }
      else if (s_test == t_treeNoLock) {
-        int key = rand() % TREE_KEY_MAX;
+        int rand = randPositive ();         
+        int key = rand % s_arraySize;
         
-        int val = s_treeArray[id]->getNoLock (key);         
+        int val = s_treeArray[id]->getNoLock (key);
+        if (val == INT_MAX)
+            m_notFound ++;
+        else
+            m_found ++;        
      }
 
      else if (s_test == t_hash) {
-        int arr_num = rand() % s_arrayNum;
-        int key = rand() % TREE_KEY_MAX;
+        int rand = randPositive ();        
+        int arr_num = rand % s_arrayNum;
+        int key = rand % s_arraySize;
 
-        int val = s_hashArray[arr_num]->get (key);        
+        int val = s_hashArray[arr_num]->get (key);
+        if (val == INT_MAX)
+            m_notFound ++;
+        else
+            m_found ++;
      }
      else if (s_test == t_alloc){ // alloc
-         int arr_indx;
-         int arr_num;
+        int arr_indx;
+        int arr_num;
+        int rand = randPositive (); 
+        arr_indx = rand % ARRAY_SIZE;
+        arr_num = rand % s_arrayNum;
 
-            arr_indx = rand() % ARRAY_SIZE;
-            arr_num = rand() % s_arrayNum;
+        Struc * struc = s_arr[arr_num]->get(arr_indx);
+        if (struc != NULL)
+            delete struc;
 
-            Struc * struc = s_arr[arr_num]->get(arr_indx);
-            if (struc != NULL)
-                delete struc;
-            
-            struc = new Struc();
-            s_arr[arr_num]->put(arr_indx, struc);  
+        struc = new Struc();
+        s_arr[arr_num]->put(arr_indx, struc);  
      }
      else if (s_test == t_queue) {
          Struc* struc = s_queue->get();
          s_queue->enque(struc);
      }
      else if (s_test == t_copy) {
-         memcpy (s_copyArrays[id], s_copyArrays[id + s_arrayNum], s_arraySize * 8);
-//         for (int i = 0; i < s_arraySize; i++)
-//             s_copyArrays[id][i] = s_copyArrays[id + s_arrayNum][i];
+         if ((n % 2) == 0) // avoid optimize out
+         memcpy (s_copyArrays[id], s_copyArrays[id + s_arrayNum], s_arraySize * sizeof (long));
+         else
+         memcpy (s_copyArrays[id + s_arrayNum], s_copyArrays[id], s_arraySize * sizeof (long));
+/*
+         for (int i = 0; i < s_arraySize; i++)
+             s_copyArrays[id][i] = s_copyArrays[id + s_arrayNum][i];
+*/
      }
-
+     else if (s_test == t_prime) {
+         int cnt = countPrimes (s_arraySize);
+     }
      else {
          fprintf (stderr, "wrong state %s", help());
          exit (1);         
      }
-     
-     if ((n % s_printFilter) == 0) {
-        long delay = getTimeMili() - s_start;
-        char str [100];
-        print_stat (id, delay, n);
-     }           
-  } 
+  }
 }
 
 int main(int argc, char * argv[])  {
@@ -360,10 +471,13 @@ int main(int argc, char * argv[])  {
 
     if (getBool("verbose", argc, argv, "print test params during test run"))
         s_verbose = 1;    
-    s_printFilter = getInteger ("printFilter", argc, argv, "print devider factor");
-    if (s_printFilter == -1)
-        s_printFilter = 2000000;
+    if (getBool("help", argc, argv, "print help"))
+        s_help = 1;;
     
+    s_delay = getInteger ("delay", argc, argv, "time limit of test ");
+    if (s_delay == -1)
+        s_delay = 5000;
+            
     if (getBool("tree", argc, argv, "test==tree search")) {
         if (getBool("nolock", argc, argv, "each thread access private array")) {
             s_test = t_treeNoLock;
@@ -374,11 +488,11 @@ int main(int argc, char * argv[])  {
         else {
             s_test = t_tree;
             s_testName = "tree";
-        }              
+        }            
         for (int i= 0; i < s_arrayNum; i++) {
             s_treeArray[i] = new SafeTree();
-            for (int n = 0; n < TREE_KEY_MAX/8; n++) {
-                int key = rand() % TREE_KEY_MAX;
+            for (int n = 0; n < s_arraySize; n++) {
+                int key = rand() % s_arraySize;
                 s_treeArray[i]->put (key, key);
             }
          }
@@ -386,7 +500,7 @@ int main(int argc, char * argv[])  {
 
     if (getBool("alloc", argc, argv, "test==mem alloc")) {
         s_test = t_alloc;
-        s_testName = "alloc";        
+        s_testName = "alloc";
         //memset ((char*) s_arr, 0, sizeof(s_arr));        
         for (int i= 0; i < s_arrayNum; i++) {
              s_arr[i] = new SafeArray();
@@ -397,8 +511,8 @@ int main(int argc, char * argv[])  {
          s_testName = "hash";
          for (int i= 0; i < s_arrayNum; i++) {         
              s_hashArray[i] = new SafeHash();
-             for (int n = 0; n < TREE_KEY_MAX/20; n++) {
-                int key = rand() % TREE_KEY_MAX;
+             for (int n = 0; n < s_arraySize/20; n++) {
+                int key = rand() % s_arraySize;
                 s_hashArray[i]->put (key, key);
             }
          }
@@ -406,7 +520,7 @@ int main(int argc, char * argv[])  {
     if (getBool("queue", argc, argv, "test==queue insert")) {    
         s_test = t_queue;
         s_testName = "queue";
-        for (int i= 0; i < QUEUE_MAX; i++) {         
+        for (int i= 0; i < s_arraySize; i++) {         
             Struc* struc = new Struc();
             s_queue->enque (struc);
         }
@@ -418,42 +532,61 @@ int main(int argc, char * argv[])  {
         for(int i = 0; i < s_arrayNum * 2; ++i)
             s_copyArrays[i] = new long [s_arraySize];
     }
-
+    if (getBool("prime", argc, argv, "test==prime  compute intensive")) {    
+        s_test = t_prime;
+        s_testName = "prime";
+        if (s_arraySize == -1 || s_arraySize == ARRAY_SIZE)
+            s_arraySize = 500;
+    }
+    if (getBool("count", argc, argv, "test==count  many threads increment a common counter")) {
+        s_test = t_count;
+        s_testName = "count";
+    }
+    
     if (s_testName == NULL) {
         args_report();
-        fprintf (stderr, "first param need: tree, alloc, queue or hash  \n");
+        fprintf (stderr, "first param need: tree, alloc, hash, queue, copy, or prime  \n");
         exit (2);                  
     }
     
-     //std::cout << " overhead loop start test=" << s_test << " threads=" << s_threadCnt << std::endl;     
-//     fprintf (stderr, "\noverhead loop start test=%s threads=%d arrays=%d size=%d printFilter=\n",
-//            s_testName, s_threadCnt, s_arrayNum, s_arraySize, s_printFilter);
     show();
-    args_report();
-    s_start = getTimeMili();     
+    if (s_help)
+        args_report();
+    
     for (int n = 0; n < s_threadCnt; n++) {
          size_t tmp = n;
-        int stat = pthread_create( &thread_id[n], NULL, thread, (void*) tmp);
+        int stat = pthread_create( &s_thread_id[n], NULL, thread, (void*) tmp);
         if (stat) {
             exit(-2);
         }
     }
          
     for (int n = 0; n < s_threadCnt; n++) {
-        pthread_join( thread_id[n], NULL);
+        pthread_join( s_thread_id[n], NULL);
     }
-     
+
+    char txt [200];
+    int ptr = 0;
+    ptr += sprintf (txt, "%s", "\nApplication exit grossLoops= ");
+    ptr += formatLong (txt + ptr, s_grossLoops);
+    if (s_test == t_copy) {
+        long delay = getTimeMili () - s_startMili;
+        long bw = s_grossLoops * 2 * s_arraySize * sizeof (long) / (delay / 1000);
+        ptr += sprintf (txt + ptr, "    grossMBPerSec=");        
+        ptr += formatLong (txt + ptr, bw/1000000);
+    }
+    printf ("%s\n\n", txt);
      
   return 0;
 }
 
 const char * help () {
     const char* str ="missing or wrong args, see examples:"
-    "\n  ./overhead  tree [threads=8] [array=8] [size=100]               tree  "
-    "\n  ./overhead  tree nolock  [threads=8] [array=8] [size=100]       tree no lock"
+    "\n  ./benchmark  tree [threads=8] [array=8] [size=100]               tree  "
+    "\n  ./benchmark  tree nolock  [threads=8] [array=8] [size=100]       tree no lock"
  //   "\n  ./overhead  h  4        hash 4 thread"
-    "\n  ./overhead  alloc  [threads=8] [array=8] [size=100]       alloc" 
-    "\n  ./overhead  queue  [threads=8] [array=8] [size=100]       queue" 
+    "\n  ./benchmark  alloc  [threads=8] [array=8] [size=100]       alloc" 
+    "\n  ./benchmark  queue  [threads=8] [array=8] [size=100]       queue" 
     "\n";
     return str;
 }

@@ -203,33 +203,14 @@ public class Args {
         return a.matches(b);
     }
    
-    public static void showAndVerify (boolean description) {
-        final int TXT_LEN = 20; 
+    public static void showAndVerify (boolean help) {
+ 
         String txt = "";
-        txt += "optional args:   ";
 
-        if (description)
-            txt += "\n";
-        for (int n = 0; n < s_searchedParams.size(); n++) {
-            String txt1 = "";
-            String arg = s_searchedParams.get(n);
-            txt1 += arg;
-            if (s_argType.get(n).matches(ArgType.bool.toString()))
-                txt1 += "(" + s_argType.get(n) + ")  ";
-            else
-                txt1 += "=" + s_argType.get(n) + "  ";
-            
-            if (txt1.length() < TXT_LEN)
-                txt1 += "                               ".substring(0, TXT_LEN - txt1.length());
-            int len = txt1.length();
-            if (description) {
-                String descr = s_descriptionMap.get(arg);
-                assert descr != null;
-                txt1 += "        " + descr + "\n";
-            }
-
-            txt += txt1;
+        if (help) {
+            txt += optionalParams();
         }
+        
         txt += "\nactual args:  ["; 
         for (int n = 0; n < s_args.length; n++) {
             txt += s_args[n] + ", ";
@@ -239,11 +220,38 @@ public class Args {
         System.err.print (txt); // print optional parameters        
 
         String err =  Args.verifyArgs();
-        assert err == null : err;
+        assert err == null : optionalParams() + err;
         verifyUnique ();        
         assert Args.s_err == null : s_err;
     }
 
+    public static String optionalParams () {
+        final int TXT_LEN = 20;        
+        String txt = "";
+        txt += "optional args:   ";
+        txt += "\n";
+        for (int n = 0; n < s_searchedParams.size(); n++) {
+            String txt1 = "";
+            String arg = s_searchedParams.get(n);
+            txt1 += arg;
+            if (s_argType.get(n).matches(ArgType.bool.toString()))
+                txt1 += "(" + s_argType.get(n) + ")  ";
+            else
+                txt1 += "=" + s_argType.get(n) + "  ";
+
+            if (txt1.length() < TXT_LEN)
+                txt1 += "                               ".substring(0, TXT_LEN - txt1.length());
+            int len = txt1.length();
+
+            String descr = s_descriptionMap.get(arg);
+            assert descr != null;
+            txt1 += "        " + descr + "\n";
+
+            txt += txt1;
+        }
+        return txt;
+    }
+        
     // verify all args appear in search list
     public static String verifyArgs () {
         for (int nArg = 0; nArg < s_args.length; nArg++) {

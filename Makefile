@@ -1,5 +1,5 @@
 
-overhead: benchmark.c args.c args.h Makefile
+benchmark: benchmark.c args.c args.h Makefile
 	g++ -g -o4  -std=c++0x  -o benchmark benchmark.c args.c -lpthread
 
 java:
