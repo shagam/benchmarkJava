@@ -1,8 +1,9 @@
 /*
- * Jewel Store Copyright (C) 2011-2014  TechoPhil Ltd
+ * Jewel Store Copyright (C) 2011-2016  TechoPhil Ltd
  *
- * To change this template, choose Tools | Templates
- * and open the template in the editor.
+ * 
+ * Licensed under MIT license
+ *
  */
 package benchmarkJava;
 
@@ -35,29 +36,28 @@ public class BenchmarkJava implements Runnable {
     /**
      * @param args the command line arguments
      */
-    static final int ARRAY_SIZ_MAX = 100;
+    //static final int ARRAY_SIZ_MAX = 100;
   
     static final int THREAD_MAX = 8;
     static final boolean THREAD_POOL = true;
     //static final boolean WITH_LOCK = true;
     static final int TREE_KEY_MAX = 100 * 1000;
     static AtomicLong  s_grossLoops = new AtomicLong();
-    static final int PRINT_FILTER = 5000000;
         
     //static AtomicInteger s_count = new AtomicInteger(); 
 
-    enum Test {
+    public static enum Test {
         tree,
         alloc,
         queue,
         hash,
-        treeNoLock,
+        noLockTree,
         copy,
         prime,
         count,
     }
     
-    static Test s_test;
+    public static Test s_test;
     static SafeArray [] s_arr;
     static SafeTree [] s_treeArray;
     static SafeHash [] s_hasharray;
@@ -71,12 +71,8 @@ public class BenchmarkJava implements Runnable {
     static int s_arraySize;
     static int s_delay;
     static boolean s_verbose;
-    static long s_printInterval;
     static boolean s_help;
     static Thread [] s_thread;
-    
-    long m_timeOfPrint = System.currentTimeMillis();
-    long m_loopsOfPrint;
 
     Randomizer m_randomizer = new Randomizer(); // faster randomizer 232000
     
@@ -99,11 +95,10 @@ public class BenchmarkJava implements Runnable {
 
     static String help () {
         String str = "";
-        str += "\n  java -jar dist/overhead.jar  tree|hash|noLock|alloc|queue [threads=8]  [size=1000000] [array=8] ";
+        str += "\n  java -jar dist/overhead.jar  tree|hash|noLock|alloc|queue|prime|count [threads=8]  [size=1000000] [array=8] ";
         str += "\n  java -jar dist/overhead.jar  tree  threads=8  size=1000000 array=8 ";
-        str += "\n  java -jar dist/overhead.jar  alloc  "; 
-        str += "\n  java -jar dist/overhead.jar  queue  ";
-       
+
+        
         str += "\ntestList:   ";
         for (Test test : Test.values())
             str += test + ", ";
@@ -114,6 +109,21 @@ public class BenchmarkJava implements Runnable {
     public static void main (String[] args) {
         //UtilsNumbers.formatIntUtest();
         //Args.utest();        
+        String [] tests = {Test.tree.toString(), Test.noLockTree.toString(), Test.hash.toString(), Test.queue.toString(),
+            Test.alloc.toString(),Test.copy.toString(),
+            Test.prime.toString(),Test.count.toString()};
+        String [] testHelp = {
+            "tree retrieve; multi tree, multi thread",
+            "noLockTree retrieve without lock; each thread access private tree",
+            "hash retrieve; multi hush, multi thread",
+            "queue get/enque; multi queue, multi thread", 
+            "alloc new / delete (With variable arraySize)",
+            "copy mem (Bandwidth) private area for each thread",            
+            "prime compute intensive; no closions",
+            "common counter increment by many threads",
+        };
+        String test = Args.getEnum ("testName", args, tests, testHelp, "test selection ");
+        
         s_threadCnt = Args.getInteger("threads", args, "number of concurrent threads");
         if (s_threadCnt == Integer.MAX_VALUE)
             s_threadCnt = Runtime.getRuntime().availableProcessors();
@@ -123,77 +133,53 @@ public class BenchmarkJava implements Runnable {
         if (s_arrayNum == Integer.MAX_VALUE)     
             s_arrayNum = s_threadCnt;
         
-        s_arraySize = Args.getInteger("size", args, "size of each array/tree");
-        if (s_arraySize == Integer.MAX_VALUE)    
-            s_arraySize = TREE_KEY_MAX;        
+        s_arraySize = Args.getInteger("size", args, "size of each array/tree");      
         
         s_delay = Args.getInteger("delay", args, "duration of test");
         if (s_delay == Integer.MAX_VALUE)
             s_delay = 5000;
         
-        s_help = Args.getBool("help", args, "help text");        
-        
-        boolean tree = Args.getBool ("tree", args, "test==tree");
-        if (tree) {
-            assert s_test == null : s_test;            
-            s_test = Test.tree;
-        }
-        
-        boolean alloc = Args.getBool ("alloc", args, "test==alloc");
-        if (alloc) {
-            assert s_test == null : s_test;            
-            s_test = Test.alloc;
-        }
-        
-        s_noLock = Args.getBool ("noLock", args, "tree no lock (Each thread has private array)");
-        if (s_noLock) {
-            if (s_arrayNum != s_threadCnt) {
-                String str ="\n######  noLock requires #array==#threads\n " + help();
-                Args.exit (str, 1);                
-            }
-            s_test = Test.treeNoLock;
-        }
-        
-        boolean queue =   Args.getBool ("queue", args, "test==queue");
-        if (queue) {
-            assert s_test == null : s_test;            
-            s_test = Test.queue;
-            s_strucQ = new ArrayBlockingQueue <>(s_arraySize);
-        }
-        boolean hash = Args.getBool ("hash", args, "test==hash");
-        if (hash) {
-            assert s_test == null : s_test;
-            s_test = Test.hash;
-        }
-        boolean copy = Args.getBool ("copy", args, "test==copy_memory (measure bandwidth)");
-        if (copy) {
-            assert s_test == null : s_test;
-            s_test = Test.copy;
-        }
-        boolean prime = Args.getBool ("prime", args, "test==prime compute intensive");
-        if (prime) {
-            assert s_test == null : s_test;
-            s_test = Test.prime;
-            if (s_arraySize == TREE_KEY_MAX)
-                s_arraySize = 500;           
-        }
-        boolean count = Args.getBool ("count", args, "test==count");
-        if (prime) {
-            assert s_test == null : s_test;
-            s_test = Test.count;
-        }        
         boolean verbose = Args.getBool ("verbose", args, "print test param during run");
         if (verbose)
             s_verbose = true;
         
+        s_help = Args.getBool("help", args, "help text");
+        if (s_help) {
+            System.err.print (Args.optionalParams());
+            Args.exit ("", 0);            
+        }
+                
+        if (test != null ) {
+            for (Test test1 : Test.values()) {
+                if (test.matches (test1.toString())) {
+                    s_test = test1;
+                    break;
+                }
+            }
+        }
+        else {
+            System.err.print ("\nError missing testName=...\n\n");
+            System.err.print (Args.optionalParams());
+            Args.exit ("", 1);
+        }
+            
+        if (s_arraySize == Integer.MAX_VALUE) {
+            if (s_test == Test.prime || s_test == Test.alloc)
+                s_arraySize = 1000;
+            else
+                s_arraySize = TREE_KEY_MAX;
+        }
+        
         Args.showAndVerify (s_help);
+        if (s_help)
+            System.exit(0);
         
         s_arr = new SafeArray [s_arrayNum];
         s_treeArray = new SafeTree [s_arrayNum];
         s_hasharray = new SafeHash [s_arrayNum];
         if (s_test == null) {
             String str ="missing testName, see examples: " + help();
-            Args.showAndVerify (true);
+            Args.showAndVerify (false);
             Args.exit (str, 1);
         }
         switch (s_test) {
@@ -204,7 +190,12 @@ public class BenchmarkJava implements Runnable {
                 break;
         
             case tree:
-            case treeNoLock:
+            case noLockTree:
+                if (s_test == Test.noLockTree && s_arrayNum != s_threadCnt) {
+                    String str ="\n######  noLock requires #array==#threads\n " + help();
+                    Args.exit (str, 1);                
+                }
+            
                 for (int i = 0; i < s_arrayNum; i++) {
                     s_treeArray[i] = new SafeTree();            
                     for (int n = 0; n < s_arraySize; n++) {
@@ -228,14 +219,8 @@ public class BenchmarkJava implements Runnable {
                 s_copyArea = new long [s_arrayNum * 2][s_arraySize];
                 break;
                 
-            case queue:               
-//                for (int n = 0; n < 1000000; n++) {
-//                    if (n % 1000 == 0) {
-//                        if (s_strucQ_final.size() > 0)
-//                            break;
-//                    }
-//                    Struc struc = new Struc(); // create and discard
-//                }
+            case queue:
+                s_strucQ = new ArrayBlockingQueue <>(s_arraySize);
                 for (int n = 0; n < s_arraySize; n++) {
                     Struc struc = new Struc();
                     s_strucQ.add(struc);
@@ -243,6 +228,7 @@ public class BenchmarkJava implements Runnable {
                 break;
                 
             case prime:
+            case count:
                 break;
 
             default:
@@ -289,10 +275,11 @@ public class BenchmarkJava implements Runnable {
         }
 
         long delayMili = System.currentTimeMillis() - s_startTimeMili;  
-        System.err.print("\n\napplication exit; grossLoops=" + formatInt(s_grossLoops.get()) );
+        System.err.print("\n\napplication exit; grossLoops=" + formatInt(s_grossLoops.get()));
         long mbperSec = s_grossLoops.get() * s_arraySize * 8 * 2 / 1000000 / (delayMili / 1000);
         if (s_test == Test.copy)
             System.err.print("      grossMBperSec=" + formatInt(mbperSec) + "\n\n");
+        System.err.print("\n\n");
         show();
     }
     
@@ -325,7 +312,7 @@ public class BenchmarkJava implements Runnable {
                         m_found ++;
                     break;
                     
-                case treeNoLock:
+                case noLockTree:
                     val = s_treeArray[m_id].get_notSynchronized(key);
                     break;
                     
@@ -420,15 +407,20 @@ public class BenchmarkJava implements Runnable {
 }
 
 class Struc {
-    int siz = BenchmarkJava.s_random.nextInt(10) * 4;
-    long m_l [] = new long[siz];
+    int siz = 10;
+    long m_l [];
+    public Struc () {
+        
+        if (BenchmarkJava.s_test == BenchmarkJava.Test.alloc)
+            siz += BenchmarkJava.s_random.nextInt(BenchmarkJava.s_arraySize);
+        else
+            siz += 100; //BenchmarkJava.s_random.nextInt(40);        
+        m_l = new long[siz];
+    }
+
+
     byte m_b;
     String m_str;
-//    protected void finelize () {
-//        if (BenchmarkJava.s_test == BenchmarkJava.Test.queue)
-//            BenchmarkJava.s_strucQ_final.add (this);
-//        
-//    }
 }
 
 class SafeTree {

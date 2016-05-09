@@ -36,39 +36,33 @@ import java.util.TreeMap;
  * 
 
  *   usage
- *  int main (String [] args) {   
- *     int threads = ArgsParse.search_int_value(THREADS, args);
- *     if (threads != Integer.MAX_VALUE)
- *            ....
- *     System.out.print(ArgsParse.show() );
  * 
- *     if (ArgsParse.s_err != null)
- *         ArgsParse.exit (ArgsParse.s_err, 1);
+ *      See utest()  below
  *
- *     String err =  ArgsParse.verifyArgs();
- *     if (err != null)
- *         ArgsParse.exit (err, 1);
  * 
  */
 public class Args {
     
-
+    static final int ARGS_MAX = 20;
     static ArrayList <String> s_searchedParams = new ArrayList<> ();
     static Map <String, String> s_descriptionMap = new TreeMap <> ();
-    static ArrayList <String> s_argType = new ArrayList<> ();
+    static ArrayList <ArgType> s_argType = new ArrayList<> ();
     static String [] s_args;
     public static String s_err = null;
+    static String [] [] s_enumHelp;
+    
     enum ArgType {
         bool,
         string,
         integer,
+        enumer,
     }
     
-    public static void clear () {
-        s_searchedParams.clear();
-        s_err = null;
-        s_args = null;
-    }
+//    public static void clear () {
+//        s_searchedParams.clear();
+//        s_err = null;
+//        s_args = null;
+//    }
 
     
     // search one formalParam in actual args
@@ -78,7 +72,7 @@ public class Args {
         String param = extractParam (name);        
         checkDuplicatesAndAddToList(param);
         s_descriptionMap.put (name, description);
-        s_argType.add (ArgType.string.toString());
+        s_argType.add (ArgType.string);
         for (int n = 0; n < args.length; n++) {
             if (args[n].contains("=")) {
                 String [] array = args[n].split("=");
@@ -98,7 +92,7 @@ public class Args {
     public static int getInteger (String name, String [] args, String description) {
         String strValue = getString (name, args, description);
         s_argType.remove(s_argType.size() - 1);
-        s_argType.add (ArgType.integer.toString());
+        s_argType.add (ArgType.integer);
         s_descriptionMap.put (name, description);
         if (strValue == null)
             return Integer.MAX_VALUE;
@@ -118,7 +112,7 @@ public class Args {
     public static int search_int_value (String name, String [] args, String description) {
         String strValue = getString (name, args, description);
         s_argType.remove(s_argType.size() - 1);
-        s_argType.add (ArgType.integer.toString());
+        s_argType.add (ArgType.integer);
         s_descriptionMap.put (name, description);
         if (strValue == null)
             return Integer.MAX_VALUE;
@@ -141,7 +135,7 @@ public class Args {
 
         checkDuplicatesAndAddToList (name);
         s_descriptionMap.put (name, description);
-        s_argType.add (ArgType.bool.toString());
+        s_argType.add (ArgType.bool);
         for (int n = 0; n < args.length; n++) {
             if (matchPrefix(args[n], name)) {
                 if (args[n].contains("="))
@@ -151,16 +145,63 @@ public class Args {
         }
         return false;
     }
-
-
     
+    public static String getEnum (String name, String [] args, String[] enumerator, String [] enumHelp, String grossDescription) {
+        if (s_args == null)
+            s_args = args;
+        //checkDuplicatesAndAddToList (name);
+
+        grossDescription += " enum alternatives: ";
+        for (int n = 0; n < enumerator.length; n++) {
+            grossDescription += enumerator[n];
+            if (n < enumerator.length - 1)
+                grossDescription += "|";
+        }
+        
+        String selection = getString (name, args, grossDescription);
+        s_argType.remove(s_argType.size() - 1);
+        s_argType.add (ArgType.enumer);          
+
+        
+        if (s_enumHelp == null) {
+            s_enumHelp = new String [ARGS_MAX][];
+        }
+        assert s_searchedParams.size() < ARGS_MAX;
+        s_enumHelp [s_searchedParams.size() - 1] = enumHelp;
+        
+        if (selection == null)
+            return null;
+                 
+        assert enumerator.length == enumHelp.length;
+         String result = null;
+         int count = 0;
+         String alternatines = "";
+         for (int n = 0; n < enumerator.length; n++) {
+             if (enumerator[n].startsWith(selection)) {
+                 count++;
+                 result = enumerator[n];
+                 alternatines += enumerator[n] + ",";
+             }
+         }
+         switch (count) {
+            case 1:
+                return result;
+            case 0:
+                 return null;
+            default:
+                System.err.print("\nmultiple match: " + alternatines + "\n");
+            return null;
+         }
+     }
+
+   
     public static boolean bool_exist (String name, String [] args, String description) {
         if (s_args == null)
             s_args = args;
 
         checkDuplicatesAndAddToList (name);
         s_descriptionMap.put (name, description);
-        s_argType.add (ArgType.bool.toString());
+        s_argType.add (ArgType.bool);
         for (int n = 0; n < args.length; n++) {
             if (matchPrefix(args[n], name)) {
                 if (args[n].contains("="))
@@ -211,11 +252,7 @@ public class Args {
             txt += optionalParams();
         }
         
-        txt += "\nactual args:  ["; 
-        for (int n = 0; n < s_args.length; n++) {
-            txt += s_args[n] + ", ";
-        }
-        txt += "]\n\n";
+        //txt += actualArgs();
 
         System.err.print (txt); // print optional parameters        
 
@@ -224,29 +261,44 @@ public class Args {
         verifyUnique ();        
         assert Args.s_err == null : s_err;
     }
+    
+    public static String actualArgs () {
+        if (s_args.length == 0)
+            return "";
+        String txt = "\nactual args:  ["; 
+        for (int n = 0; n < s_args.length; n++) {
+            txt += s_args[n] + ", ";
+        }
+        txt += "]\n\n";
+        return txt;
+    }
 
     public static String optionalParams () {
-        final int TXT_LEN = 20;        
+        final int TXT_LEN = 30;        
         String txt = "";
         txt += "optional args:   ";
-        txt += "\n";
         for (int n = 0; n < s_searchedParams.size(); n++) {
-            String txt1 = "";
+            String txt1 = "\n";
             String arg = s_searchedParams.get(n);
             txt1 += arg;
-            if (s_argType.get(n).matches(ArgType.bool.toString()))
+            if (s_argType.get(n) == ArgType.bool)
                 txt1 += "(" + s_argType.get(n) + ")  ";
             else
-                txt1 += "=" + s_argType.get(n) + "  ";
+                txt1 += "=<" + s_argType.get(n) + ">  ";
 
             if (txt1.length() < TXT_LEN)
-                txt1 += "                               ".substring(0, TXT_LEN - txt1.length());
+                txt1 += "                                            ".substring(0, TXT_LEN - txt1.length());
             int len = txt1.length();
 
             String descr = s_descriptionMap.get(arg);
             assert descr != null;
-            txt1 += "        " + descr + "\n";
-
+            txt1 += "        " + descr;
+            
+            if (s_argType.get(n) == ArgType.enumer) {
+                for (String help :s_enumHelp[n]) {
+                    txt1 += "\n       " + help;
+                }                
+            }
             txt += txt1;
         }
         return txt;
@@ -323,6 +375,10 @@ public class Args {
         else
             threadCount = Runtime.getRuntime().availableProcessors();
         assert threadCount == 7;
+
+        String [] args1 = {"test=tre"};        
+        String [] tests = {"tree","hash","queue","alloc","prime","queue","copy","count","noLock"};
+        String test = Args.getEnum ("test", args, tests, tests, "test selection ");
         
         // verify and print
         Args.showAndVerify (true);

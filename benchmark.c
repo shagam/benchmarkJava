@@ -11,10 +11,12 @@
 #include "args.h"
 #include <unordered_map>
 #include <limits.h>
+#include <assert.h>
 
 //#include <hash_map>
 
-//* Jewel Store Copyright (C) 2011-2014  TechoPhil Ltd
+//* Jewel Store Copyright (C) 2011-2016  TechoPhil Ltd
+// Licensed under MIT license
 
 using namespace std;
 
@@ -24,26 +26,6 @@ long getTimeMili () {
     long millis = (time.tv_sec * 1000.0) + (time.tv_usec / 1000.0) + 0.5;
     return millis;
 }
-
-class Struc {
-    long *m_longArray;
-    char m_byte;
-    char *m_str;
-public:
-    Struc () {
-        int siz = (rand() % 10) * 4;
-        m_longArray = new long [siz];
-        m_byte = 0;
-        m_str = 0;       
-         //memset ((char*)a, 0, sizeof(a));
-        //memset ((char*)b, 0, sizeof(b));
-    }
-    ~Struc () {
-        delete [] m_longArray;
-    }
-    
-};
-
 
 const int ARRAY_SIZE = 100000;
 const int THREAD_MAX = 100;
@@ -68,18 +50,43 @@ static pthread_t               s_thread_id[THREAD_MAX];
 const char * help ();
 int getInt (char* th);
 
+
 enum Test {
-    t_alloc,
     t_tree,
+    t_noLockTree,
     t_hash,
-    t_treeNoLock,
     t_queue,
-    t_copy,
+    t_alloc,
+    t_copy,    
     t_prime,
     t_count,
-};
+    t_help,
+};    
 
 int s_test;
+
+class Struc {
+    long *m_longArray;
+    char m_byte;
+    char *m_str;
+public:
+    Struc () {
+        int siz;
+        if (s_test == t_alloc)
+            siz = (rand() % s_arraySize);
+        else
+            siz = (rand() % 40);
+        m_longArray = new long [siz];
+        m_byte = 0;
+        m_str = 0;       
+         //memset ((char*)a, 0, sizeof(a));
+        //memset ((char*)b, 0, sizeof(b));
+    }
+    ~Struc () {
+        delete [] m_longArray;
+    }
+    
+};
 
 inline long InterlockedIncrement(long* p, int delta)
 {
@@ -380,7 +387,7 @@ void *thread ( void *ptr ) {
         else
             m_found ++;
      }
-     else if (s_test == t_treeNoLock) {
+     else if (s_test == t_noLockTree) {
         int rand = randPositive ();         
         int key = rand % s_arraySize;
         
@@ -433,6 +440,9 @@ void *thread ( void *ptr ) {
      else if (s_test == t_prime) {
          int cnt = countPrimes (s_arraySize);
      }
+     else if (s_test == t_count) {
+         
+     }
      else {
          fprintf (stderr, "wrong state %s", help());
          exit (1);         
@@ -442,6 +452,7 @@ void *thread ( void *ptr ) {
 
 int main(int argc, char * argv[])  {
     //formatIntUtest ();
+    //utest ();
     if (argc > 1){
         int utest_flag = strcmp (argv[1], "utest");
         //fprintf (stderr,"\n %d %s \n", utest_flag, argv[1]);
@@ -466,93 +477,141 @@ int main(int argc, char * argv[])  {
         s_arrayNum = s_threadCnt;
 
     s_arraySize = getInteger ("size", argc, argv, "size of each array");
-    if (s_arraySize == -1)
-        s_arraySize = ARRAY_SIZE;
 
     if (getBool("verbose", argc, argv, "print test params during test run"))
         s_verbose = 1;    
-    if (getBool("help", argc, argv, "print help"))
-        s_help = 1;;
+    if (getBool("help", argc, argv, "print arguments"))
+        s_help = 1;
     
     s_delay = getInteger ("delay", argc, argv, "time limit of test ");
     if (s_delay == -1)
         s_delay = 5000;
+
+    const char * tests[] = {"tree","noLock","hash","queue","alloc","copy","prime","count"};
+    const char * testHelp[] = {
+        "tree retrieve; multi tree, multi thread",
+        "noLocktree retrieve without lock; each thread access private tree",
+        "hash retrieve; multi hush, multi thread",
+        "queue get/enque; multi queue, multi thread", 
+        "alloc new / delete (With variable arraySize)",        
+        "copy mem (Bandwidth) private area for each thread",
+        "prime compute intensive; no closions",
+        "common counter increment by many threads",  
+    };    
+    const char * test = argsGetEnum ("testName", argc, argv, 8, tests, testHelp, "");
+    
+    if (s_help) {
+        args_report();
+        exit (0);
+    }
+
+    int found;
+    if (test != NULL ) {
+        for (int testNum = 0; testNum <= t_count; testNum++) {
+            if (strcmp (test, tests[testNum]) == 0) {
+                s_test = testNum;
+                found = 1;
+                break;
+            }
+        }
+    }
+    else {
+        fprintf (stderr, "\nMissing testName=tree|noLockTree|hash|queue|alloc|copy|prime|count or help  \n");
+        args_report();        
+        exit (2);        
+    }
+    
+    if (found == 0) {
+        args_report();
+        fprintf (stderr, "\nmissing testName=tree|noLockTree|hash|queue|alloc|copy|prime|count or help  \n");
+        exit (5);         
+    }    
+    // default for all other tests
+    if (s_arraySize == -1) {
+        if (s_test == t_prime || s_test == t_alloc)
+            s_arraySize = 1000;
+        else
+            s_arraySize = ARRAY_SIZE;
+    }
+    
+
+    
+    // initialize data structures
+    switch (s_test) {
+        case t_alloc:
+            s_testName = "alloc"; 
+            for (int i= 0; i < s_arrayNum; i++) {
+                 s_arr[i] = new SafeArray();
+            }            
+            break;
             
-    if (getBool("tree", argc, argv, "test==tree search")) {
-        if (getBool("nolock", argc, argv, "each thread access private array")) {
-            s_test = t_treeNoLock;
-            s_testName = "tree_noLock";
+        case t_prime:
+            s_testName = "prime";            
+            break;
+            
+        case t_noLockTree:
             if (s_arrayNum < s_threadCnt)
                 s_arrayNum = s_threadCnt;
-        }
-        else {
-            s_test = t_tree;
-            s_testName = "tree";
-        }            
-        for (int i= 0; i < s_arrayNum; i++) {
-            s_treeArray[i] = new SafeTree();
-            for (int n = 0; n < s_arraySize; n++) {
-                int key = rand() % s_arraySize;
-                s_treeArray[i]->put (key, key);
-            }
-         }
-    }        
-
-    if (getBool("alloc", argc, argv, "test==mem alloc")) {
-        s_test = t_alloc;
-        s_testName = "alloc";
-        //memset ((char*) s_arr, 0, sizeof(s_arr));        
-        for (int i= 0; i < s_arrayNum; i++) {
-             s_arr[i] = new SafeArray();
-        }
+            s_testName = "noLockTree";
+            // fall through
+        case t_tree:
+            if (s_testName == NULL)
+                s_testName = "tree";
+            for (int i= 0; i < s_arrayNum; i++) {
+                s_treeArray[i] = new SafeTree();
+                for (int n = 0; n < s_arraySize; n++) {
+                    int key = rand() % s_arraySize;
+                    s_treeArray[i]->put (key, key);
+                }
+            }            
+            break;
+            
+        case t_hash:
+            s_testName = "hash";              
+            for (int i= 0; i < s_arrayNum; i++) {         
+                 s_hashArray[i] = new SafeHash();
+                 for (int n = 0; n < s_arraySize/20; n++) {
+                    int key = rand() % s_arraySize;
+                    s_hashArray[i]->put (key, key);
+                }
+             }      
+            break;
+            
+        case t_queue:
+            s_testName = "queue";            
+            for (int i= 0; i < s_arraySize; i++) {         
+                Struc* struc = new Struc();
+                s_queue->enque (struc);
+            }           
+            break;
+            
+        case t_copy:
+            s_testName = "copy";            
+            s_copyArrays = new long* [s_arrayNum * 2];
+            for(int i = 0; i < s_arrayNum * 2; ++i)
+                s_copyArrays[i] = new long [s_arraySize];            
+            break;
+            
+        case t_count:
+            s_testName = "count";            
+            break;
+            
+        case t_help:
+            break;
+            
+        default:
+            args_report();
+            fprintf (stderr, "first param need: tree, alloc, hash, queue, copy, prime, count or help  \n");
+            exit (2);             
     }
-    if (getBool("hash", argc, argv, "test==hash map search")) {
-         s_test = t_hash;
-         s_testName = "hash";
-         for (int i= 0; i < s_arrayNum; i++) {         
-             s_hashArray[i] = new SafeHash();
-             for (int n = 0; n < s_arraySize/20; n++) {
-                int key = rand() % s_arraySize;
-                s_hashArray[i]->put (key, key);
-            }
-         }
-    }
-    if (getBool("queue", argc, argv, "test==queue insert")) {    
-        s_test = t_queue;
-        s_testName = "queue";
-        for (int i= 0; i < s_arraySize; i++) {         
-            Struc* struc = new Struc();
-            s_queue->enque (struc);
-        }
-    }
-    if (getBool("copy", argc, argv, "test==memory copy")) {    
-        s_test = t_copy;
-        s_testName = "copy";
-        s_copyArrays = new long* [s_arrayNum * 2];
-        for(int i = 0; i < s_arrayNum * 2; ++i)
-            s_copyArrays[i] = new long [s_arraySize];
-    }
-    if (getBool("prime", argc, argv, "test==prime  compute intensive")) {    
-        s_test = t_prime;
-        s_testName = "prime";
-        if (s_arraySize == -1 || s_arraySize == ARRAY_SIZE)
-            s_arraySize = 500;
-    }
-    if (getBool("count", argc, argv, "test==count  many threads increment a common counter")) {
-        s_test = t_count;
-        s_testName = "count";
-    }
-    
-    if (s_testName == NULL) {
-        args_report();
-        fprintf (stderr, "first param need: tree, alloc, hash, queue, copy, or prime  \n");
-        exit (2);                  
-    }
-    
     show();
-    if (s_help)
-        args_report();
-    
+
+    const char * err = verify (argc, argv);
+    if (err != NULL) {
+        fprintf (stderr, "invalid param=%s  \n", err);
+        exit (3);
+    }
+        
     for (int n = 0; n < s_threadCnt; n++) {
          size_t tmp = n;
         int stat = pthread_create( &s_thread_id[n], NULL, thread, (void*) tmp);
