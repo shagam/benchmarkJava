@@ -42,8 +42,8 @@ public class BenchmarkJava implements Runnable {
     static final boolean THREAD_POOL = true;
     //static final boolean WITH_LOCK = true;
     static final int TREE_KEY_MAX = 100 * 1000;
-    static AtomicLong  s_grossLoops = new AtomicLong();
-        
+    static AtomicLong  s_commonCounter = new AtomicLong();
+    static long s_grossLoops[];    
     //static AtomicInteger s_count = new AtomicInteger(); 
 
     public static enum Test {
@@ -69,6 +69,7 @@ public class BenchmarkJava implements Runnable {
     static int s_threadCnt = THREAD_MAX;
     static long s_startTimeMili;
     static int s_arraySize;
+    static int s_chunkAlloc;
     static int s_delay;
     static boolean s_verbose;
     static boolean s_help;
@@ -128,6 +129,7 @@ public class BenchmarkJava implements Runnable {
         if (s_threadCnt == Integer.MAX_VALUE)
             s_threadCnt = Runtime.getRuntime().availableProcessors();
         s_thread = new Thread [s_threadCnt];
+        s_grossLoops = new long [s_threadCnt];
 
         s_arrayNum = Args.getInteger("arrays", args, "number of arrays, accessed by threads");
         if (s_arrayNum == Integer.MAX_VALUE)     
@@ -135,6 +137,10 @@ public class BenchmarkJava implements Runnable {
         
         s_arraySize = Args.getInteger("size", args, "size of each array/tree");      
         
+        s_chunkAlloc = Args.getInteger("chunkAlloc", args, "chunk size of alloc");
+        if (s_chunkAlloc == Integer.MAX_VALUE)
+            s_chunkAlloc = 1000;
+
         s_delay = Args.getInteger("delay", args, "duration of test");
         if (s_delay == Integer.MAX_VALUE)
             s_delay = 5000;
@@ -158,7 +164,7 @@ public class BenchmarkJava implements Runnable {
             }
         }
         else {
-            System.err.print ("\nError missing testName=...\n\n");
+            System.err.print ("\n*** Error missing testName=...\n\n");
             System.err.print (Args.optionalParams());
             Args.exit ("", 1);
         }
@@ -274,9 +280,13 @@ public class BenchmarkJava implements Runnable {
             }
         }
 
+        long grossLoopCunt = 0;
+        for (int n = 0; n < s_threadCnt; n++)
+            grossLoopCunt += s_grossLoops[n];
+        
         long delayMili = System.currentTimeMillis() - s_startTimeMili;  
-        System.err.print("\n\napplication exit; grossLoops=" + formatInt(s_grossLoops.get()));
-        long mbperSec = s_grossLoops.get() * s_arraySize * 8 * 2 / 1000000 / (delayMili / 1000);
+        System.err.print("\n\napplication exit; grossLoops=" + formatInt(grossLoopCunt));
+        long mbperSec = grossLoopCunt * s_arraySize * 8 * 2 / 1000000 / (delayMili / 1000);
         if (s_test == Test.copy)
             System.err.print("      grossMBperSec=" + formatInt(mbperSec) + "\n\n");
         System.err.print("\n\n");
@@ -289,7 +299,7 @@ public class BenchmarkJava implements Runnable {
         //Random m_generator = new Random();
         for (long loops = 1;  ; loops++) {
             if ((loops & 0xf) == 0) {
-                s_grossLoops.addAndGet(0x10);
+                s_grossLoops[m_id] += 0x10;
                 if (System.currentTimeMillis() - s_startTimeMili > s_delay)
                     break;
             }
@@ -345,6 +355,7 @@ public class BenchmarkJava implements Runnable {
                     break;
                     
                 case count: //s_grossLoops is incremented
+                    s_commonCounter.addAndGet(1);
                     break;
                                        
                 default:
@@ -361,6 +372,8 @@ public class BenchmarkJava implements Runnable {
         txt += " size=" + s_arraySize;
         if (s_noLock)
             txt += " noLock=" + s_noLock;
+        if (s_test == Test.alloc)
+            txt += " chunkAlloc=" + s_chunkAlloc;
         
         return txt;
     }
@@ -412,7 +425,7 @@ class Struc {
     public Struc () {
         
         if (BenchmarkJava.s_test == BenchmarkJava.Test.alloc)
-            siz += BenchmarkJava.s_random.nextInt(BenchmarkJava.s_arraySize);
+            siz += BenchmarkJava.s_random.nextInt(BenchmarkJava.s_chunkAlloc);
         else
             siz += 100; //BenchmarkJava.s_random.nextInt(40);        
         m_l = new long[siz];

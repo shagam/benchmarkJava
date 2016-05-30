@@ -39,6 +39,7 @@ static const char* s_testName = NULL;
 static int s_threadCnt = 0;
 static int s_arrayNum = s_threadCnt;
 static int s_arraySize;
+static int s_chunkAlloc;
 static int s_verbose = 0;
 static int s_help = 0;
 static int s_delay;
@@ -73,7 +74,7 @@ public:
     Struc () {
         int siz;
         if (s_test == t_alloc)
-            siz = (rand() % s_arraySize);
+            siz = (rand() % s_chunkAlloc);
         else
             siz = (rand() % 40);
         m_longArray = new long [siz];
@@ -93,7 +94,8 @@ inline long InterlockedIncrement(long* p, int delta)
     return __atomic_add_fetch(p, delta, __ATOMIC_SEQ_CST);
 }
 
-static long s_grossLoops;
+static long s_grossLoops[THREAD_MAX];
+static long s_commonCounter = 0;
 
 long seed = getTimeMili ();    
     
@@ -328,8 +330,9 @@ SafeArray *s_arr [ARRAY_MAX];
 SafeQueue *s_queue = new SafeQueue(); 
 
 int show (void) {
-     int siz = fprintf (stderr, "\nbenchmark c: test=%s delay=%d threads=%d arrayNum=%d size=%d \n",
-            s_testName, s_delay, s_threadCnt, s_arrayNum, s_arraySize);
+    char txt [STR]
+     int siz = fprintf (stderr, "\nbenchmark c: test=%s delay=%d threads=%d arrayNum=%d size=%d chunkAlloc=%d \n",
+            s_testName, s_delay, s_threadCnt, s_arrayNum, s_arraySize, s_chunkAlloc);
      return siz;
 }
 
@@ -372,7 +375,8 @@ void *thread ( void *ptr ) {
   for (long n = 1;  ; n++) {
       
     if ((n & 0xf) == 0) {
-      InterlockedIncrement(& s_grossLoops, 0x10);
+        s_grossLoops[id] += 0x10;
+      //InterlockedIncrement(& s_grossLoops, 0x10);
       if (getTimeMili () - s_startMili > s_delay)
           break;
     }
@@ -441,7 +445,7 @@ void *thread ( void *ptr ) {
          int cnt = countPrimes (s_arraySize);
      }
      else if (s_test == t_count) {
-         
+        InterlockedIncrement(& s_commonCounter, 1);         
      }
      else {
          fprintf (stderr, "wrong state %s", help());
@@ -477,7 +481,11 @@ int main(int argc, char * argv[])  {
         s_arrayNum = s_threadCnt;
 
     s_arraySize = getInteger ("size", argc, argv, "size of each array");
-
+        
+    s_chunkAlloc = getInteger("chunkAlloc", argc, argv, "chunk size of alloc");
+    if (s_chunkAlloc == -1)
+        s_chunkAlloc = 1000; 
+    
     if (getBool("verbose", argc, argv, "print test params during test run"))
         s_verbose = 1;    
     if (getBool("help", argc, argv, "print arguments"))
@@ -624,13 +632,16 @@ int main(int argc, char * argv[])  {
         pthread_join( s_thread_id[n], NULL);
     }
 
+    long grossLoopCount = 0;
+    for (int n = 0; n < s_threadCnt; n++)
+        grossLoopCount += s_grossLoops[n];
     char txt [200];
     int ptr = 0;
     ptr += sprintf (txt, "%s", "\nApplication exit grossLoops= ");
-    ptr += formatLong (txt + ptr, s_grossLoops);
+    ptr += formatLong (txt + ptr, grossLoopCount);
     if (s_test == t_copy) {
         long delay = getTimeMili () - s_startMili;
-        long bw = s_grossLoops * 2 * s_arraySize * sizeof (long) / (delay / 1000);
+        long bw = grossLoopCount * 2 * s_arraySize * sizeof (long) / (delay / 1000);
         ptr += sprintf (txt + ptr, "    grossMBPerSec=");        
         ptr += formatLong (txt + ptr, bw/1000000);
     }
